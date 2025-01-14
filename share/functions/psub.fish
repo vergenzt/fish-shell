@@ -1,6 +1,6 @@
-function psub --description "Read from stdin into a file and output the filename. Remove the file when the command that called psub exits."
-    set -l options -x 'f,F' -x 'F,s' h/help f/file F/fifo 's/suffix=' T-testing
-    argparse -n psub --max-args=0 $options -- $argv
+function psub --description "Run command, connecting either its stdout (-o, the default) or stdin (-i) to a file and outputting the filename. Remove the file when the command that called psub exits."
+    set -l options -x 'f,F' -x 'F,s' -x 'i/o' h/help i/in o/out f/file F/fifo 's/suffix=' T-testing
+    argparse --stop-nonopt -n psub $options -- $argv
     or return
 
     if set -q _flag_help
@@ -8,6 +8,7 @@ function psub --description "Read from stdin into a file and output the filename
         return 0
     end
 
+    set -l cmd
     set -l dirname
     set -l filename
     set -l funcname
@@ -17,31 +18,57 @@ function psub --description "Read from stdin into a file and output the filename
         return 1
     end
 
+    if (count $argv >/dev/null)
+        set -l cmd $argv
+    else
+        if set -q _flag_in
+            printf (_ "%s: -i/--in flag requires a command") psub >&2
+            return 1
+        end
+        set -l cmd cat
+    end
+
     set -l tmpdir /tmp
     set -q TMPDIR
     and set tmpdir $TMPDIR
 
     if set -q _flag_fifo
-        # Write output to pipe. This needs to be done in the background so
-        # that the command substitution exits without needing to wait for
-        # all the commands to exit.
-        set dirname (mktemp -d $tmpdir/.psub.XXXXXXXXXX)
-        or return 1
-        set filename $dirname/psub.fifo"$_flag_suffix"
+        set _flag_suffix ".fifo$_flag_suffix"
+    end
+
+    set filename (
+        if test -z "$_flag_suffix"
+            mktemp $tmpdir/.psub.XXXXXXXXXX
+        else
+            set dirname (mktemp -d $tmpdir/.psub.XXXXXXXXXX)
+            or return 1
+            echo "$dirname/psub$_flag_suffix"
+        end
+    )
+
+    if set -q _flag_fifo
         command mkfifo $filename
-        # Note that if we were to do the obvious `cat >$filename &`, we would deadlock
-        # because $filename may be opened before the fork. Use tee to ensure it is opened
-        # after the fork.
-        command tee $filename >/dev/null &
-    else if test -z "$_flag_suffix"
-        set filename (mktemp $tmpdir/.psub.XXXXXXXXXX)
-        or return 1
-        command cat >$filename
+
+        # Connect to pipe. This needs to be done in the background so that the command
+        # substitution exits without needing to wait for all the commands to exit.
+
+        if set -q _flag_in
+            # Note that if we were to do the obvious `$cmd <$filename &`, we would deadlock
+            # because $filename may be opened before the fork. Use cat to ensure it is opened
+            # for reading after the fork.
+            command cat $filename | $cmd &
+        else
+            # Same here: if we were to do the obvious `cat >$filename &`, we would deadlock
+            # because $filename may be opened before the fork. Use tee to ensure it is opened
+            # after the fork.
+            $cmd | command tee $filename >/dev/null &
+        end
     else
-        set dirname (mktemp -d $tmpdir/.psub.XXXXXXXXXX)
-        or return 1
-        set filename "$dirname/psub$_flag_suffix"
-        command cat >$filename
+        if set -q _flag_in
+            command cat >$filename | $cmd &
+        else
+            command cat >$filename
+        end
     end
 
     # Write filename to stdout

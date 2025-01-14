@@ -8,7 +8,7 @@ Synopsis
 
 .. synopsis::
 
-    COMMAND1 ( COMMAND2 | psub [-F | --fifo] [-f | --file] [(-s | --suffix) SUFFIX] )
+    COMMAND1 ( psub [-i | --in] [-o | --out] [-F | --fifo] [-f | --file] [(-s | --suffix) SUFFIX] COMMAND2 ... )
 
 Description
 -----------
